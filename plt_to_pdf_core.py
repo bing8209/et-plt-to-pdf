@@ -1,7 +1,7 @@
 import sys
 import os
 import re
-import fitz  # PyMuPDF 核心矢量引擎
+import fitz  # PyMuPDF 核心矢量画布引擎
 
 def perfect_plt_to_pdf(plt_path):
     if not os.path.exists(plt_path):
@@ -36,22 +36,24 @@ def perfect_plt_to_pdf(plt_path):
         print("【错误】该 PLT 文件内未检测到任何有效的裁片几何轨迹坐标！")
         return False
 
-    # 服装绘图仪标准单位：1 mm = 40 个 PLT 单位
+    # 💡 彻底修复的工业换算率：1 mm = 40 个 PLT 单位
     PLT_TO_PT = 72.0 / 1016.0  # 转换为 PDF 画布的标准 Point 点
     
     width_units = max_x - min_x
     height_units = max_y - min_y
     
-    # 增加 20mm (约 56 point) 的工业安全留白，防止任何边缘裁片被贴边切掉
+    # 增加 20mm (约 56 point) 的工业安全留白，防止边缘裁片被贴边切掉
     padding = 56  
     pdf_width = width_units * PLT_TO_PT + padding * 2
-    pdf_height = height_units * PT_TO_PT + padding * 2
+    
+    # 🔒 【重磅修复】：这里原本错打成了 PT_TO_PT，现已彻底修正为全局统一的 PLT_TO_PT 变量
+    pdf_height = height_units * PLT_TO_PT + padding * 2
 
     print(f"【尺寸量算】排料图实际物理门幅: {width_units/40:.1f}mm 宽, {height_units/40:.1f}mm 长。")
     print(f"【画布自适应】已为您自动定制 {pdf_width/72*25.4:.1f}mm x {pdf_height/72*25.4:.1f}mm 的无损 PDF 画布。")
 
     # -------------------------------------------------------------
-    # 步骤 2：创建全新 PDF 矢量硬核绘制
+    # 步骤 2：创建全新 PDF 并执行 1:1 高保真矢量重构
     # -------------------------------------------------------------
     doc = fitz.open()
     page = doc.new_page(width=pdf_width, height=pdf_height)
@@ -71,7 +73,7 @@ def perfect_plt_to_pdf(plt_path):
                 else:
                     shape.line_to(fitz.Point(pdf_x, pdf_y))
 
-    # 锁定高保真工业级规范：纯黑线（0,0,0），线宽极细（0.25 point = 约 0.08mm），杜绝花颜色
+    # 锁定高保真工业级规范：纯黑线（0,0,0），线宽极细（0.25 point = 约 0.08mm），杜绝杂色
     shape.finish(color=(0, 0, 0), width=0.25, close_path=False)
     shape.commit()
     
