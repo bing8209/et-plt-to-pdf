@@ -36,7 +36,7 @@ def perfect_plt_to_pdf(plt_path):
         print("【错误】该 PLT 文件内未检测到任何有效的裁片几何轨迹坐标！")
         return False
 
-    # 💡 彻底修复的工业换算率：1 mm = 40 个 PLT 单位
+    # 工业换算率：1 mm = 40 个 PLT 单位
     PLT_TO_PT = 72.0 / 1016.0  # 转换为 PDF 画布的标准 Point 点
     
     width_units = max_x - min_x
@@ -45,35 +45,46 @@ def perfect_plt_to_pdf(plt_path):
     # 增加 20mm (约 56 point) 的工业安全留白，防止边缘裁片被贴边切掉
     padding = 56  
     pdf_width = width_units * PLT_TO_PT + padding * 2
-    
-    # 🔒 【重磅修复】：这里原本错打成了 PT_TO_PT，现已彻底修正为全局统一的 PLT_TO_PT 变量
     pdf_height = height_units * PLT_TO_PT + padding * 2
 
     print(f"【尺寸量算】排料图实际物理门幅: {width_units/40:.1f}mm 宽, {height_units/40:.1f}mm 长。")
     print(f"【画布自适应】已为您自动定制 {pdf_width/72*25.4:.1f}mm x {pdf_height/72*25.4:.1f}mm 的无损 PDF 画布。")
 
     # -------------------------------------------------------------
-    # 步骤 2：创建全新 PDF 并执行 1:1 高保真矢量重构
+    # 步骤 2：创建全新 PDF 并执行 1:1 高保真矢量重构（新版稳定兼容机制）
     # -------------------------------------------------------------
     doc = fitz.open()
     page = doc.new_page(width=pdf_width, height=pdf_height)
     shape = page.new_shape()
     
     print("【矢量重构】正在将高密度纸样骨架无损映射至 PDF 矩阵...")
+    
+    current_polyline = []
+
     for cmd, args in commands:
         if cmd in ('PU', 'PD'):
             coords = re.findall(r'(-?\d+),(-?\d+)', args)
             for idx, (x_str, y_str) in enumerate(coords):
-                # 转换坐标，并作 Y 轴镜像（因为 PLT 坐标系与 PDF 坐标系上下颠倒）
+                # 转换坐标并镜像 Y 轴
                 pdf_x = (int(x_str) - min_x) * PLT_TO_PT + padding
                 pdf_y = pdf_height - ((int(y_str) - min_y) * PLT_TO_PT + padding)
+                pt = fitz.Point(pdf_x, pdf_y)
                 
                 if idx == 0 and cmd == 'PU':
-                    shape.move_to(fitz.Point(pdf_x, pdf_y))
+                    # 遇到抬笔（PU），先画完上一条线
+                    if len(current_polyline) > 1:
+                        shape.draw_polyline(current_polyline)
+                    # 开启全新的一条线段
+                    current_polyline = [pt]
                 else:
-                    shape.line_to(fitz.Point(pdf_x, pdf_y))
+                    # 遇到落笔（PD）或连续坐标，持续加点
+                    current_polyline.append(pt)
 
-    # 锁定高保真工业级规范：纯黑线（0,0,0），线宽极细（0.25 point = 约 0.08mm），杜绝杂色
+    # 循环结束后，确保最后一条线也被绘制出来
+    if len(current_polyline) > 1:
+        shape.draw_polyline(current_polyline)
+
+    # 锁定高保真工业级规范：纯黑线（0,0,0），线宽极细（0.25 point），杜绝杂色
     shape.finish(color=(0, 0, 0), width=0.25, close_path=False)
     shape.commit()
     
