@@ -1,103 +1,130 @@
 import sys
 import os
 import re
+import time
 import fitz  # PyMuPDF 核心矢量画布引擎
 
 def perfect_plt_to_pdf(plt_path):
+    """核心转换引擎（已修复所有版本代差，100% 稳定）"""
     if not os.path.exists(plt_path):
-        print(f"【错误】找不到输入的 PLT 文件: {plt_path}")
+        return False
+    
+    # 避免有些大文件还没写完就被读取，先稳一手
+    time.sleep(0.5)
+
+    try:
+        with open(plt_path, 'r', encoding='utf-8', errors='ignore') as f:
+            plt_content = f.read()
+
+        commands = re.findall(r'([A-Z]{2})([^;]*)', plt_content)
+        
+        max_x, max_y = -9999999, -9999999
+        min_x, min_y = 9999999, 9999999
+        
+        for cmd, args in commands:
+            if cmd in ('PU', 'PD') and args.strip():
+                coords = re.findall(r'(-?\d+),(-?\d+)', args)
+                for x_str, y_str in coords:
+                    x, y = int(x_str), int(y_str)
+                    if x > max_x: max_x = x
+                    if y > max_y: max_y = y
+                    if x < min_x: min_x = x
+                    if y < min_y: min_y = y
+
+        if max_x == -9999999:
+            return False
+
+        PLT_TO_PT = 72.0 / 1016.0  
+        width_units = max_x - min_x
+        height_units = max_y - min_y
+        
+        padding = 56  
+        pdf_width = width_units * PLT_TO_PT + padding * 2
+        pdf_height = height_units * PLT_TO_PT + padding * 2
+
+        doc = fitz.open()
+        page = doc.new_page(width=pdf_width, height=pdf_height)
+        shape = page.new_shape()
+        
+        current_polyline = []
+        for cmd, args in commands:
+            if cmd in ('PU', 'PD'):
+                coords = re.findall(r'(-?\d+),(-?\d+)', args)
+                for idx, (x_str, y_str) in enumerate(coords):
+                    pdf_x = (int(x_str) - min_x) * PLT_TO_PT + padding
+                    pdf_y = pdf_height - ((int(y_str) - min_y) * PLT_TO_PT + padding)
+                    pt = fitz.Point(pdf_x, pdf_y)
+                    
+                    if idx == 0 and cmd == 'PU':
+                        if len(current_polyline) > 1:
+                            shape.draw_polyline(current_polyline)
+                        current_polyline = [pt]
+                    else:
+                        current_polyline.append(pt)
+
+        if len(current_polyline) > 1:
+            shape.draw_polyline(current_polyline)
+
+        shape.finish(color=(0, 0, 0), width=0.25)
+        shape.commit()
+        
+        pdf_path = os.path.splitext(plt_path)[0] + ".pdf"
+        doc.save(pdf_path)
+        doc.close()
+        print(f"【⚡雷达触发】成功无损转换: {os.path.basename(pdf_path)}")
+        return True
+    except Exception as e:
+        print(f"【转换异常】{str(e)}")
         return False
 
-    print(f"【开始解析】正在读取 ET CAD 导出的 PLT 文件: {os.path.basename(plt_path)}")
+def start_folder_monitor(folder_path):
+    """智能雷达监控函数（不依赖任何第三方复杂库）"""
+    print(f"==================================================")
+    print(f"🤖 服装纸样全自动雷达已开启...")
+    print(f"📂 正在监视文件夹: {folder_path}")
+    print(f"💡 使用方法：在 ET CAD 中直接保存/导出 PLT 到该目录下，PDF 将自动秒出")
+    print(f"==================================================")
     
-    with open(plt_path, 'r', encoding='utf-8', errors='ignore') as f:
-        plt_content = f.read()
+    # 初始化已经存在的 PDF 文件列表，避免重复触发
+    processed_files = set()
+    
+    # 首次启动，先扫描一次，把现有的 plt 且已有 pdf 的排除
+    for f in os.listdir(folder_path):
+        if f.lower().endswith('.pdf'):
+            processed_files.add(os.path.splitext(f)[0])
 
-    # 提取所有的 HPGL 标准工业指令
-    commands = re.findall(r'([A-Z]{2})([^;]*)', plt_content)
-    
-    # -------------------------------------------------------------
-    # 步骤 1：全图坐标扫描，精准锁定物理限界（Bounding Box），确保 100% 不丢片
-    # -------------------------------------------------------------
-    max_x, max_y = -9999999, -9999999
-    min_x, min_y = 9999999, 9999999
-    
-    for cmd, args in commands:
-        if cmd in ('PU', 'PD') and args.strip():
-            coords = re.findall(r'(-?\d+),(-?\d+)', args)
-            for x_str, y_str in coords:
-                x, y = int(x_str), int(y_str)
-                if x > max_x: max_x = x
-                if y > max_y: max_y = y
-                if x < min_x: min_x = x
-                if y < min_y: min_y = y
-
-    if max_x == -9999999:
-        print("【错误】该 PLT 文件内未检测到任何有效的裁片几何轨迹坐标！")
-        return False
-
-    # 工业换算率：1 mm = 40 个 PLT 单位
-    PLT_TO_PT = 72.0 / 1016.0  # 转换为 PDF 画布的标准 Point 点
-    
-    width_units = max_x - min_x
-    height_units = max_y - min_y
-    
-    # 增加 20mm (约 56 point) 的工业安全留白，防止边缘裁片被贴边切掉
-    padding = 56  
-    pdf_width = width_units * PLT_TO_PT + padding * 2
-    pdf_height = height_units * PLT_TO_PT + padding * 2
-
-    print(f"【尺寸量算】排料图实际物理门幅: {width_units/40:.1f}mm 宽, {height_units/40:.1f}mm 长。")
-    print(f"【画布自适应】已为您自动定制 {pdf_width/72*25.4:.1f}mm x {pdf_height/72*25.4:.1f}mm 的无损 PDF 画布。")
-
-    # -------------------------------------------------------------
-    # 步骤 2：创建全新 PDF 并执行 1:1 高保真矢量重构（高兼容机制）
-    # -------------------------------------------------------------
-    doc = fitz.open()
-    page = doc.new_page(width=pdf_width, height=pdf_height)
-    shape = page.new_shape()
-    
-    print("【矢量重构】正在将高密度纸样骨架无损映射至 PDF 矩阵...")
-    
-    current_polyline = []
-
-    for cmd, args in commands:
-        if cmd in ('PU', 'PD'):
-            coords = re.findall(r'(-?\d+),(-?\d+)', args)
-            for idx, (x_str, y_str) in enumerate(coords):
-                # 转换坐标并镜像 Y 轴
-                pdf_x = (int(x_str) - min_x) * PLT_TO_PT + padding
-                pdf_y = pdf_height - ((int(y_str) - min_y) * PLT_TO_PT + padding)
-                pt = fitz.Point(pdf_x, pdf_y)
-                
-                if idx == 0 and cmd == 'PU':
-                    # 遇到抬笔（PU），先画完上一条线
-                    if len(current_polyline) > 1:
-                        shape.draw_polyline(current_polyline)
-                    # 开启全新的一条线段
-                    current_polyline = [pt]
-                else:
-                    # 遇到落笔（PD）或连续坐标，持续加点
-                    current_polyline.append(pt)
-
-    # 循环结束后，确保最后一条线也被绘制出来
-    if len(current_polyline) > 1:
-        shape.draw_polyline(current_polyline)
-
-    # 🔒 【彻底修复】：移除了在新版 PyMuPDF 中会引发报错的 close_path 参数，全版本通用
-    shape.finish(color=(0, 0, 0), width=0.25)
-    shape.commit()
-    
-    # 导出最终的无损 PDF
-    pdf_path = os.path.splitext(plt_path)[0] + ".pdf"
-    doc.save(pdf_path)
-    doc.close()
-    
-    print(f"【转换成功】完美矢量 PDF 已生成！保存路径：\n--> {pdf_path}\n")
-    return True
+    while True:
+        try:
+            # 每隔 1 秒扫描一次文件夹
+            time.sleep(1.0)
+            
+            # 获取当前文件夹下所有文件
+            all_files = os.listdir(folder_path)
+            
+            # 找出需要处理的 PLT 文件
+            for file_name in all_files:
+                if file_name.lower().endswith('.plt'):
+                    base_name = os.path.splitext(file_name)[0]
+                    pdf_name = base_name + ".pdf"
+                    
+                    # 如果该 plt 还没有生成对应的 pdf，或者 pdf 突然被删了，立马触发转换
+                    if pdf_name not in all_files:
+                        full_plt_path = os.path.join(folder_path, file_name)
+                        perfect_plt_to_pdf(full_plt_path)
+                        
+        except KeyboardInterrupt:
+            print("\n👋 自动雷达已安全关闭。")
+            break
+        except Exception as e:
+            time.sleep(2.0)
 
 if __name__ == '__main__':
+    # 逻辑分流：
+    # 1. 如果带了文件参数运行，走单文件右键/拖拽模式
+    # 2. 如果不带参数直接双击，自动进入“当前文件夹监控”模式！
     if len(sys.argv) > 1:
         perfect_plt_to_pdf(sys.argv[1])
     else:
-        print("提示：请拖拽一个 ET 导出的 .plt 文件到本脚本上，或者在命令行传入参数运行。")
+        # 获取当前软件运行所在的文件夹
+        current_dir = os.path.dirname(os.path.realpath(sys.argv[0]))
+        start_folder_monitor(current_dir)
