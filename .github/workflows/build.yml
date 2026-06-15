@@ -1,0 +1,33 @@
+name: 编译服装工具插件
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: 拉取最新代码
+      uses: actions/checkout@v4
+
+    - name: 部署工业级 Python 环境
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: 安装 PyMuPDF 与打包核心
+      run: |
+        python -m pip install --upgrade pip
+        pip install pymupdf pyinstaller
+
+    - name: 核心编译打包 (EXE化)
+      run: |
+        pyinstaller --onefile plt_to_pdf_core.py
+
+    - name: 发布成品小工具
+      uses: actions/upload-artifact@v4
+      with:
+        name: ET服装PLT无损转换器
+        path: dist/plt_to_pdf_core.exe
