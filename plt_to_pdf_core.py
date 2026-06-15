@@ -51,7 +51,7 @@ def perfect_plt_to_pdf(plt_path):
     print(f"【画布自适应】已为您自动定制 {pdf_width/72*25.4:.1f}mm x {pdf_height/72*25.4:.1f}mm 的无损 PDF 画布。")
 
     # -------------------------------------------------------------
-    # 步骤 2：创建全新 PDF 并执行 1:1 高保真矢量重构（新版稳定兼容机制）
+    # 步骤 2：创建全新 PDF 并执行 1:1 高保真矢量重构（高兼容机制）
     # -------------------------------------------------------------
     doc = fitz.open()
     page = doc.new_page(width=pdf_width, height=pdf_height)
@@ -84,8 +84,8 @@ def perfect_plt_to_pdf(plt_path):
     if len(current_polyline) > 1:
         shape.draw_polyline(current_polyline)
 
-    # 锁定高保真工业级规范：纯黑线（0,0,0），线宽极细（0.25 point），杜绝杂色
-    shape.finish(color=(0, 0, 0), width=0.25, close_path=False)
+    # 🔒 【彻底修复】：移除了在新版 PyMuPDF 中会引发报错的 close_path 参数，全版本通用
+    shape.finish(color=(0, 0, 0), width=0.25)
     shape.commit()
     
     # 导出最终的无损 PDF
